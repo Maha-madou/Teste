@@ -52,7 +52,8 @@ import kotlinx.coroutines.launch
 private data class Service(
     val name: String,
     val summary: String,
-    val details: String
+    val details: String,
+    val roadsideAssistance: Boolean = false
 )
 
 private val services = listOf(
@@ -61,7 +62,13 @@ private val services = listOf(
     Service("Imprimerie", "Impression et services bureautiques", "Impression de documents et accompagnement pour vos travaux d'imprimerie."),
     Service("Antennes paraboliques", "Installation et réglage", "Pose, orientation et dépannage de votre antenne."),
     Service("Climatiseurs", "Installation et entretien", "Diagnostic, maintenance et installation de climatiseurs."),
-    Service("Réfrigérateurs", "Réparation et entretien", "Diagnostic des problèmes de froid et maintenance de réfrigérateurs.")
+    Service("Réfrigérateurs", "Réparation et entretien", "Diagnostic des problèmes de froid et maintenance de réfrigérateurs."),
+    Service(
+        "Dépannage automobile",
+        "Assistance en cas de panne sur la route",
+        "Décrivez votre véhicule, votre localisation et les symptômes. Un agent pourra évaluer la panne et, si elle est identifiée, confirmer avec vous la possibilité de livraison des pièces nécessaires.",
+        roadsideAssistance = true
+    )
 )
 
 class MainActivity : ComponentActivity() {
@@ -120,8 +127,17 @@ private fun ServicePlusApp() {
                 showRequestForm -> RequestForm(
                     service = requireNotNull(selectedService),
                     modifier = Modifier.padding(innerPadding),
-                    onSubmit = { name, phone, location, problem ->
-                        val message = buildRequestMessage(selectedService!!.name, name, phone, location, problem)
+                    onSubmit = { name, phone, location, problem, vehicle, knownCause, neededParts ->
+                        val message = buildRequestMessage(
+                            service = requireNotNull(selectedService),
+                            name = name,
+                            phone = phone,
+                            location = location,
+                            problem = problem,
+                            vehicle = vehicle,
+                            knownCause = knownCause,
+                            neededParts = neededParts
+                        )
                         val result = openWhatsApp(context, message)
                         scope.launch { snackbarHostState.showSnackbar(result) }
                     }
@@ -209,14 +225,20 @@ private fun ServiceDetails(service: Service, modifier: Modifier = Modifier, onRe
 private fun RequestForm(
     service: Service,
     modifier: Modifier = Modifier,
-    onSubmit: (String, String, String, String) -> Unit
+    onSubmit: (String, String, String, String, String, String, String) -> Unit
 ) {
     var name by rememberSaveable { mutableStateOf("") }
     var phone by rememberSaveable { mutableStateOf("") }
     var location by rememberSaveable { mutableStateOf("") }
     var problem by rememberSaveable { mutableStateOf("") }
+    var vehicle by rememberSaveable { mutableStateOf("") }
+    var knownCause by rememberSaveable { mutableStateOf("") }
+    var neededParts by rememberSaveable { mutableStateOf("") }
     var submitted by rememberSaveable { mutableStateOf(false) }
-    val valid = name.isNotBlank() && phone.isNotBlank() && problem.isNotBlank()
+    val valid = name.isNotBlank() &&
+        phone.isNotBlank() &&
+        problem.isNotBlank() &&
+        (!service.roadsideAssistance || (location.isNotBlank() && vehicle.isNotBlank()))
 
     Column(
         modifier = modifier
@@ -244,28 +266,86 @@ private fun RequestForm(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
             isError = submitted && phone.isBlank()
         )
+        if (service.roadsideAssistance) {
+            OutlinedTextField(
+                value = vehicle,
+                onValueChange = { vehicle = it },
+                label = { Text("Véhicule (marque, modèle) *") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                isError = submitted && vehicle.isBlank()
+            )
+        }
         OutlinedTextField(
             value = location,
             onValueChange = { location = it },
-            label = { Text("Votre ville ou quartier (facultatif)") },
+            label = {
+                Text(
+                    if (service.roadsideAssistance) "Localisation de la panne *"
+                    else "Votre ville ou quartier (facultatif)"
+                )
+            },
             modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+            singleLine = true,
+            isError = submitted && service.roadsideAssistance && location.isBlank()
         )
         OutlinedTextField(
             value = problem,
             onValueChange = { problem = it },
-            label = { Text("Décrivez votre problème *") },
+            label = {
+                Text(
+                    if (service.roadsideAssistance) "Symptômes de la panne *"
+                    else "Décrivez votre problème *"
+                )
+            },
             modifier = Modifier.fillMaxWidth(),
             minLines = 4,
             isError = submitted && problem.isBlank()
         )
+        if (service.roadsideAssistance) {
+            OutlinedTextField(
+                value = knownCause,
+                onValueChange = { knownCause = it },
+                label = { Text("Panne identifiée (facultatif)") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2
+            )
+            OutlinedTextField(
+                value = neededParts,
+                onValueChange = { neededParts = it },
+                label = { Text("Pièces nécessaires, si connues (facultatif)") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2
+            )
+            Text(
+                "La livraison des pièces sera à confirmer avec l'équipe après évaluation de la panne.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
         if (submitted && !valid) {
-            Text("Veuillez renseigner votre nom, votre téléphone et le problème.", color = MaterialTheme.colorScheme.error)
+            Text(
+                if (service.roadsideAssistance) {
+                    "Veuillez renseigner votre nom, votre téléphone, le véhicule, la localisation et les symptômes."
+                } else {
+                    "Veuillez renseigner votre nom, votre téléphone et le problème."
+                },
+                color = MaterialTheme.colorScheme.error
+            )
         }
         Button(
             onClick = {
                 submitted = true
-                if (valid) onSubmit(name.trim(), phone.trim(), location.trim(), problem.trim())
+                if (valid) {
+                    onSubmit(
+                        name.trim(),
+                        phone.trim(),
+                        location.trim(),
+                        problem.trim(),
+                        vehicle.trim(),
+                        knownCause.trim(),
+                        neededParts.trim()
+                    )
+                }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -276,18 +356,30 @@ private fun RequestForm(
 }
 
 private fun buildRequestMessage(
-    service: String,
+    service: Service,
     name: String,
     phone: String,
     location: String,
-    problem: String
+    problem: String,
+    vehicle: String,
+    knownCause: String,
+    neededParts: String
 ): String = buildString {
     appendLine("Bonjour, je souhaite faire une demande de service.")
-    appendLine("Service : $service")
+    appendLine("Service : ${service.name}")
     appendLine("Nom : $name")
     appendLine("Téléphone : $phone")
-    if (location.isNotBlank()) appendLine("Ville/quartier : $location")
-    append("Problème : $problem")
+    if (service.roadsideAssistance) {
+        appendLine("Véhicule : $vehicle")
+        appendLine("Localisation de la panne : $location")
+        appendLine("Symptômes : $problem")
+        if (knownCause.isNotBlank()) appendLine("Panne identifiée par le client : $knownCause")
+        if (neededParts.isNotBlank()) appendLine("Pièces souhaitées (à confirmer) : $neededParts")
+        append("Merci de m'indiquer les possibilités d'intervention et, si la panne est identifiée, de livraison des pièces.")
+    } else {
+        if (location.isNotBlank()) appendLine("Ville/quartier : $location")
+        append("Problème : $problem")
+    }
 }
 
 private fun openWhatsApp(context: Context, message: String): String {

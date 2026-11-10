@@ -1,6 +1,6 @@
 # Service Plus
 
-Application Android native de mise en relation avec un technicien pour six services : téléphones, télévisions, imprimerie, antennes paraboliques, climatiseurs et réfrigérateurs.
+Application Android native de mise en relation avec un technicien pour sept services : téléphones, télévisions, imprimerie, antennes paraboliques, climatiseurs, réfrigérateurs et dépannage automobile.
 
 ## Démarrer
 
@@ -8,6 +8,8 @@ Ouvrez ce projet dans Android Studio, laissez Gradle synchroniser les dépendanc
 
 ## Configurer WhatsApp
 
-Avant de distribuer l'application, remplacez `REMPLACER_PAR_VOTRE_NUMERO_WHATSAPP` dans `app/src/main/java/com/example/maintenance/WhatsappConfig.kt` par le numéro professionnel au format international, chiffres uniquement. L'application valide le numéro avant d'ouvrir WhatsApp avec la demande pré-remplie.
+Le numéro professionnel est configuré au format international, chiffres uniquement, dans `app/src/main/java/com/example/maintenance/WhatsappConfig.kt`. L'application le valide avant d'ouvrir WhatsApp avec la demande pré-remplie.
 
-Le MVP ne stocke aucune demande sur un serveur : le client choisit un service, saisit ses coordonnées et décrit son problème, puis transmet le tout dans WhatsApp.
+Pour l'assistance automobile, le client précise son véhicule, la localisation de la panne et ses symptômes. Il peut aussi indiquer une panne identifiée et les pièces nécessaires ; leur disponibilité et une éventuelle livraison sont à confirmer par l'équipe après évaluation.
+
+L'application ne stocke aucune demande sur un serveur : le client choisit un service, saisit ses coordonnées et transmet sa demande dans WhatsApp. Elle ne répartit pas les interventions en direct et ne gère ni stock de pièces ni paiement.
