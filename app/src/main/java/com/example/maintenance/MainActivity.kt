@@ -53,7 +53,8 @@ private data class Service(
     val name: String,
     val summary: String,
     val details: String,
-    val roadsideAssistance: Boolean = false
+    val roadsideAssistance: Boolean = false,
+    val maternityTransport: Boolean = false
 )
 
 private val services = listOf(
@@ -68,6 +69,12 @@ private val services = listOf(
         "Assistance en cas de panne sur la route",
         "Décrivez votre véhicule, votre localisation et les symptômes. Un agent pourra évaluer la panne et, si elle est identifiée, confirmer avec vous la possibilité de livraison des pièces nécessaires.",
         roadsideAssistance = true
+    ),
+    Service(
+        "Transport pour femme en travail",
+        "Demande de transport en cas de travail",
+        "Utilisez ce service pour demander à être rappelée au sujet d'un transport. Le contact configuré est temporaire : ce n'est pas un numéro d'urgence officiel et aucun véhicule sanitaire ou transport n'est garanti. En cas de danger immédiat, contactez les services d'urgence locaux.",
+        maternityTransport = true
     )
 )
 
@@ -127,7 +134,7 @@ private fun ServicePlusApp() {
                 showRequestForm -> RequestForm(
                     service = requireNotNull(selectedService),
                     modifier = Modifier.padding(innerPadding),
-                    onSubmit = { name, phone, location, problem, vehicle, knownCause, neededParts ->
+                    onSubmit = { name, phone, location, problem, vehicle, knownCause, neededParts, destination ->
                         val message = buildRequestMessage(
                             service = requireNotNull(selectedService),
                             name = name,
@@ -136,7 +143,8 @@ private fun ServicePlusApp() {
                             problem = problem,
                             vehicle = vehicle,
                             knownCause = knownCause,
-                            neededParts = neededParts
+                            neededParts = neededParts,
+                            destination = destination
                         )
                         val result = openWhatsApp(context, message)
                         scope.launch { snackbarHostState.showSnackbar(result) }
@@ -145,7 +153,11 @@ private fun ServicePlusApp() {
                 selectedService != null -> ServiceDetails(
                     service = requireNotNull(selectedService),
                     modifier = Modifier.padding(innerPadding),
-                    onRequest = { showRequestForm = true }
+                    onRequest = { showRequestForm = true },
+                    onCallContact = {
+                        val result = dialContact(context)
+                        scope.launch { snackbarHostState.showSnackbar(result) }
+                    }
                 )
                 else -> ServiceList(
                     modifier = Modifier.padding(innerPadding),
@@ -197,7 +209,12 @@ private fun ServiceList(modifier: Modifier = Modifier, onSelect: (Service) -> Un
 }
 
 @Composable
-private fun ServiceDetails(service: Service, modifier: Modifier = Modifier, onRequest: () -> Unit) {
+private fun ServiceDetails(
+    service: Service,
+    modifier: Modifier = Modifier,
+    onRequest: () -> Unit,
+    onCallContact: () -> Unit
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -210,13 +227,22 @@ private fun ServiceDetails(service: Service, modifier: Modifier = Modifier, onRe
         Text(service.details, style = MaterialTheme.typography.bodyLarge)
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Text(
-                "Décrivez votre problème et laissez vos coordonnées. Votre demande sera préparée dans WhatsApp.",
+                if (service.maternityTransport) {
+                    "Le numéro de contact est temporaire, pas un numéro d'urgence officiel. L'application ne garantit pas la disponibilité d'une ambulance ou d'un transport. En cas de danger immédiat, contactez les services d'urgence locaux."
+                } else {
+                    "Décrivez votre problème et laissez vos coordonnées. Votre demande sera préparée dans WhatsApp."
+                },
                 modifier = Modifier.padding(18.dp),
                 style = MaterialTheme.typography.bodyMedium
             )
         }
+        if (service.maternityTransport) {
+            OutlinedButton(onClick = onCallContact, modifier = Modifier.fillMaxWidth()) {
+                Text("Appeler le contact temporaire")
+            }
+        }
         Button(onClick = onRequest, modifier = Modifier.fillMaxWidth()) {
-            Text("Faire une demande")
+            Text(if (service.maternityTransport) "Envoyer une demande WhatsApp" else "Faire une demande")
         }
     }
 }
@@ -225,7 +251,7 @@ private fun ServiceDetails(service: Service, modifier: Modifier = Modifier, onRe
 private fun RequestForm(
     service: Service,
     modifier: Modifier = Modifier,
-    onSubmit: (String, String, String, String, String, String, String) -> Unit
+    onSubmit: (String, String, String, String, String, String, String, String) -> Unit
 ) {
     var name by rememberSaveable { mutableStateOf("") }
     var phone by rememberSaveable { mutableStateOf("") }
@@ -234,11 +260,15 @@ private fun RequestForm(
     var vehicle by rememberSaveable { mutableStateOf("") }
     var knownCause by rememberSaveable { mutableStateOf("") }
     var neededParts by rememberSaveable { mutableStateOf("") }
+    var destination by rememberSaveable { mutableStateOf("") }
     var submitted by rememberSaveable { mutableStateOf(false) }
-    val valid = name.isNotBlank() &&
-        phone.isNotBlank() &&
-        problem.isNotBlank() &&
-        (!service.roadsideAssistance || (location.isNotBlank() && vehicle.isNotBlank()))
+    val valid = when {
+        service.maternityTransport -> phone.isNotBlank() && location.isNotBlank()
+        service.roadsideAssistance ->
+            name.isNotBlank() && phone.isNotBlank() && problem.isNotBlank() &&
+                location.isNotBlank() && vehicle.isNotBlank()
+        else -> name.isNotBlank() && phone.isNotBlank() && problem.isNotBlank()
+    }
 
     Column(
         modifier = modifier
@@ -248,19 +278,36 @@ private fun RequestForm(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("Demande : ${service.name}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text("Indiquez comment vous joindre et décrivez le problème.")
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = { Text("Votre nom *") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            isError = submitted && name.isBlank()
+        Text(
+            if (service.maternityTransport) {
+                "Indiquez où vous prendre en charge et un numéro pour vous rappeler."
+            } else {
+                "Indiquez comment vous joindre et décrivez le problème."
+            }
         )
+        if (service.maternityTransport) {
+            Text(
+                "Le contact est temporaire, pas un numéro d'urgence officiel. Aucun transport n'est garanti. En cas de danger immédiat, contactez les services d'urgence locaux.",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        if (!service.maternityTransport) {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Votre nom *") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                isError = submitted && name.isBlank()
+            )
+        }
         OutlinedTextField(
             value = phone,
             onValueChange = { phone = it },
-            label = { Text("Votre téléphone *") },
+            label = {
+                Text(if (service.maternityTransport) "Téléphone de rappel *" else "Votre téléphone *")
+            },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
@@ -281,26 +328,41 @@ private fun RequestForm(
             onValueChange = { location = it },
             label = {
                 Text(
-                    if (service.roadsideAssistance) "Localisation de la panne *"
-                    else "Votre ville ou quartier (facultatif)"
+                    when {
+                        service.maternityTransport -> "Lieu de prise en charge *"
+                        service.roadsideAssistance -> "Localisation de la panne *"
+                        else -> "Votre ville ou quartier (facultatif)"
+                    }
                 )
             },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            isError = submitted && service.roadsideAssistance && location.isBlank()
+            isError = submitted && (service.roadsideAssistance || service.maternityTransport) && location.isBlank()
         )
+        if (service.maternityTransport) {
+            OutlinedTextField(
+                value = destination,
+                onValueChange = { destination = it },
+                label = { Text("Destination (si connue, facultatif)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
         OutlinedTextField(
             value = problem,
             onValueChange = { problem = it },
             label = {
                 Text(
-                    if (service.roadsideAssistance) "Symptômes de la panne *"
-                    else "Décrivez votre problème *"
+                    when {
+                        service.maternityTransport -> "Urgence ou détails utiles (facultatif)"
+                        service.roadsideAssistance -> "Symptômes de la panne *"
+                        else -> "Décrivez votre problème *"
+                    }
                 )
             },
             modifier = Modifier.fillMaxWidth(),
-            minLines = 4,
-            isError = submitted && problem.isBlank()
+            minLines = if (service.maternityTransport) 2 else 4,
+            isError = submitted && !service.maternityTransport && problem.isBlank()
         )
         if (service.roadsideAssistance) {
             OutlinedTextField(
@@ -324,10 +386,13 @@ private fun RequestForm(
         }
         if (submitted && !valid) {
             Text(
-                if (service.roadsideAssistance) {
-                    "Veuillez renseigner votre nom, votre téléphone, le véhicule, la localisation et les symptômes."
-                } else {
-                    "Veuillez renseigner votre nom, votre téléphone et le problème."
+                when {
+                    service.maternityTransport ->
+                        "Veuillez renseigner le lieu de prise en charge et le téléphone de rappel."
+                    service.roadsideAssistance ->
+                        "Veuillez renseigner votre nom, votre téléphone, le véhicule, la localisation et les symptômes."
+                    else ->
+                        "Veuillez renseigner votre nom, votre téléphone et le problème."
                 },
                 color = MaterialTheme.colorScheme.error
             )
@@ -343,7 +408,8 @@ private fun RequestForm(
                         problem.trim(),
                         vehicle.trim(),
                         knownCause.trim(),
-                        neededParts.trim()
+                        neededParts.trim(),
+                        destination.trim()
                     )
                 }
             },
@@ -363,13 +429,21 @@ private fun buildRequestMessage(
     problem: String,
     vehicle: String,
     knownCause: String,
-    neededParts: String
+    neededParts: String,
+    destination: String
 ): String = buildString {
     appendLine("Bonjour, je souhaite faire une demande de service.")
     appendLine("Service : ${service.name}")
-    appendLine("Nom : $name")
-    appendLine("Téléphone : $phone")
-    if (service.roadsideAssistance) {
+    if (service.maternityTransport) {
+        appendLine("Téléphone de rappel : $phone")
+        appendLine("Lieu de prise en charge : $location")
+        if (destination.isNotBlank()) appendLine("Destination souhaitée : $destination")
+        if (problem.isNotBlank()) appendLine("Urgence/détails utiles : $problem")
+        appendLine("Le contact utilisé est temporaire et n'est pas un numéro d'urgence officiel.")
+        append("En cas de danger immédiat, je contacterai les services d'urgence locaux.")
+    } else if (service.roadsideAssistance) {
+        appendLine("Nom : $name")
+        appendLine("Téléphone : $phone")
         appendLine("Véhicule : $vehicle")
         appendLine("Localisation de la panne : $location")
         appendLine("Symptômes : $problem")
@@ -377,15 +451,17 @@ private fun buildRequestMessage(
         if (neededParts.isNotBlank()) appendLine("Pièces souhaitées (à confirmer) : $neededParts")
         append("Merci de m'indiquer les possibilités d'intervention et, si la panne est identifiée, de livraison des pièces.")
     } else {
+        appendLine("Nom : $name")
+        appendLine("Téléphone : $phone")
         if (location.isNotBlank()) appendLine("Ville/quartier : $location")
         append("Problème : $problem")
     }
 }
 
 private fun openWhatsApp(context: Context, message: String): String {
-    val number = WhatsappConfig.BUSINESS_NUMBER.filter(Char::isDigit)
+    val number = ContactConfig.CONTACT_PHONE_NUMBER.filter(Char::isDigit)
     if (number.length !in 8..15) {
-        return "WhatsApp n'est pas encore configuré. Ajoutez le numéro professionnel dans WhatsappConfig.kt."
+        return "WhatsApp n'est pas encore configuré. Vérifiez le numéro de contact dans ContactConfig.kt."
     }
 
     val uri = Uri.parse("https://wa.me/$number?text=${Uri.encode(message)}")
@@ -394,5 +470,19 @@ private fun openWhatsApp(context: Context, message: String): String {
         "Ouverture de WhatsApp..."
     } catch (_: ActivityNotFoundException) {
         "Impossible d'ouvrir WhatsApp ou un navigateur sur cet appareil."
+    }
+}
+
+private fun dialContact(context: Context): String {
+    val number = ContactConfig.CONTACT_PHONE_NUMBER.filter(Char::isDigit)
+    if (number.length !in 8..15) {
+        return "Le numéro de contact temporaire n'est pas configuré."
+    }
+
+    return try {
+        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number")))
+        "Composeur ouvert avec le contact temporaire."
+    } catch (_: ActivityNotFoundException) {
+        "Impossible d'ouvrir le composeur sur cet appareil."
     }
 }

@@ -1,6 +1,6 @@
 # Service Plus
 
-Application Android native de mise en relation avec un technicien pour sept services : téléphones, télévisions, imprimerie, antennes paraboliques, climatiseurs, réfrigérateurs et dépannage automobile.
+Application Android native de mise en relation pour huit services : téléphones, télévisions, imprimerie, antennes paraboliques, climatiseurs, réfrigérateurs, dépannage automobile et demande de transport pour une femme en travail.
 
 ## Démarrer
 
@@ -8,8 +8,10 @@ Ouvrez ce projet dans Android Studio, laissez Gradle synchroniser les dépendanc
 
 ## Configurer WhatsApp
 
-Le numéro professionnel est configuré au format international, chiffres uniquement, dans `app/src/main/java/com/example/maintenance/WhatsappConfig.kt`. L'application le valide avant d'ouvrir WhatsApp avec la demande pré-remplie.
+Le numéro de contact est configuré au format international, chiffres uniquement, dans `app/src/main/java/com/example/maintenance/ContactConfig.kt`. Il est utilisé pour WhatsApp et pour ouvrir le composeur Android avec le numéro prérempli.
 
 Pour l'assistance automobile, le client précise son véhicule, la localisation de la panne et ses symptômes. Il peut aussi indiquer une panne identifiée et les pièces nécessaires ; leur disponibilité et une éventuelle livraison sont à confirmer par l'équipe après évaluation.
 
-L'application ne stocke aucune demande sur un serveur : le client choisit un service, saisit ses coordonnées et transmet sa demande dans WhatsApp. Elle ne répartit pas les interventions en direct et ne gère ni stock de pièces ni paiement.
+Pour une demande de transport en cas de travail, le formulaire demande le lieu de prise en charge et un téléphone de rappel ; la destination et les détails utiles sont facultatifs. Le contact est temporaire, n'est pas un numéro d'urgence officiel et ne garantit ni ambulance ni transport. En cas de danger immédiat, il faut contacter les services d'urgence locaux.
+
+L'application ne stocke aucune demande sur un serveur : le client choisit un service, saisit les informations demandées et transmet sa demande dans WhatsApp. Elle ne répartit pas les interventions en direct, ne gère ni stock de pièces ni paiement et ne garantit pas la disponibilité d'un transport.
