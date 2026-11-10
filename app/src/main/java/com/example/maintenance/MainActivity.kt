@@ -1,12 +1,24 @@
 package com.example.maintenance
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,6 +41,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -48,6 +61,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import java.util.Locale
+import java.math.BigDecimal
 
 private data class Service(
     val name: String,
@@ -95,6 +110,7 @@ private fun ServicePlusApp() {
     val context = LocalContext.current
     var selectedService by remember { mutableStateOf<Service?>(null) }
     var showRequestForm by rememberSaveable { mutableStateOf(false) }
+    var showQuoteFlow by rememberSaveable { mutableStateOf(false) }
 
     MaterialTheme(
         colorScheme = androidx.compose.material3.lightColorScheme(
@@ -110,7 +126,11 @@ private fun ServicePlusApp() {
                 TopAppBar(
                     title = {
                         Text(
-                            text = if (showRequestForm) "Votre demande" else selectedService?.name ?: "Service Plus",
+                            text = when {
+                                showQuoteFlow -> "Confirmer le devis"
+                                showRequestForm -> "Votre demande"
+                                else -> selectedService?.name ?: "Service Plus"
+                            },
                             fontWeight = FontWeight.Bold
                         )
                     },
@@ -118,7 +138,11 @@ private fun ServicePlusApp() {
                         if (selectedService != null || showRequestForm) {
                             OutlinedButton(
                                 onClick = {
-                                    if (showRequestForm) showRequestForm = false else selectedService = null
+                                    when {
+                                        showQuoteFlow -> showQuoteFlow = false
+                                        showRequestForm -> showRequestForm = false
+                                        else -> selectedService = null
+                                    }
                                 },
                                 modifier = Modifier.padding(start = 8.dp),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
@@ -131,6 +155,14 @@ private fun ServicePlusApp() {
             }
         ) { innerPadding ->
             when {
+                showQuoteFlow -> QuoteConfirmationScreen(
+                    service = requireNotNull(selectedService),
+                    modifier = Modifier.padding(innerPadding),
+                    onSendWhatsApp = { message ->
+                        val result = openWhatsApp(context, message)
+                        scope.launch { snackbarHostState.showSnackbar(result) }
+                    }
+                )
                 showRequestForm -> RequestForm(
                     service = requireNotNull(selectedService),
                     modifier = Modifier.padding(innerPadding),
@@ -154,6 +186,7 @@ private fun ServicePlusApp() {
                     service = requireNotNull(selectedService),
                     modifier = Modifier.padding(innerPadding),
                     onRequest = { showRequestForm = true },
+                    onQuote = { showQuoteFlow = true },
                     onCallContact = {
                         val result = dialContact(context)
                         scope.launch { snackbarHostState.showSnackbar(result) }
@@ -213,6 +246,7 @@ private fun ServiceDetails(
     service: Service,
     modifier: Modifier = Modifier,
     onRequest: () -> Unit,
+    onQuote: () -> Unit,
     onCallContact: () -> Unit
 ) {
     Column(
@@ -244,6 +278,157 @@ private fun ServiceDetails(
         Button(onClick = onRequest, modifier = Modifier.fillMaxWidth()) {
             Text(if (service.maternityTransport) "Envoyer une demande WhatsApp" else "Faire une demande")
         }
+        OutlinedButton(onClick = onQuote, modifier = Modifier.fillMaxWidth()) {
+            Text("Saisir un devis reçu")
+        }
+    }
+}
+
+@Composable
+private fun QuoteConfirmationScreen(
+    service: Service,
+    modifier: Modifier = Modifier,
+    onSendWhatsApp: (String) -> Unit
+) {
+    var amount by rememberSaveable { mutableStateOf("") }
+    var currency by rememberSaveable { mutableStateOf("") }
+    var accepted by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var paymentMethod by rememberSaveable { mutableStateOf<String?>(null) }
+    val parsedAmount = amount.trim().replace(',', '.').toBigDecimalOrNull()
+    val validQuote = parsedAmount != null && parsedAmount > BigDecimal.ZERO && currency.isNotBlank()
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text("Devis : ${service.name}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        if (accepted == null) {
+            Text(
+                "Après avoir reçu le montant total du prestataire par WhatsApp, saisissez-le ici. L'application ne calcule pas les tarifs."
+            )
+            OutlinedTextField(
+                value = amount,
+                onValueChange = { amount = it },
+                label = { Text("Montant total du devis *") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = amount.isNotBlank() && parsedAmount == null
+            )
+            OutlinedTextField(
+                value = currency,
+                onValueChange = { currency = it },
+                label = { Text("Devise indiquée par le prestataire *") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            if (amount.isNotBlank() && (parsedAmount == null || parsedAmount <= BigDecimal.ZERO)) {
+                Text(
+                    "Le montant doit être supérieur à zéro.",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            if (validQuote) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text("Total du devis reçu", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            "${amount.trim()} ${currency.trim()}",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        } else {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Total du devis reçu", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "${amount.trim()} ${currency.trim()}",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        when (accepted) {
+            null -> {
+                Button(
+                    onClick = { accepted = true },
+                    enabled = validQuote,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Accepter le devis et choisir un paiement")
+                }
+                OutlinedButton(
+                    onClick = {
+                        accepted = false
+                        onSendWhatsApp(buildQuoteResponse(service, amount, currency, false, null))
+                    },
+                    enabled = validQuote,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Refuser le devis")
+                }
+            }
+            true -> {
+                Text("Vous avez accepté ce montant. Choisissez ensuite un moyen de paiement.")
+                PaymentConfig.METHOD_LABELS.forEach { method ->
+                    Card(
+                        onClick = { paymentMethod = method },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (paymentMethod == method) {
+                                MaterialTheme.colorScheme.secondaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            }
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = paymentMethod == method, onClick = { paymentMethod = method })
+                            Text(method, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                }
+                Text(
+                    "Le paiement se fait hors application et ne sera pas vérifié par celle-ci.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Button(
+                    onClick = {
+                        onSendWhatsApp(
+                            buildQuoteResponse(
+                                service,
+                                amount,
+                                currency,
+                                accepted = true,
+                                paymentMethod = requireNotNull(paymentMethod)
+                            )
+                        )
+                    },
+                    enabled = paymentMethod != null,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Confirmer le devis et le moyen de paiement")
+                }
+            }
+            false -> {
+                Text("Vous avez refusé ce devis. Aucun moyen de paiement n'a été sélectionné.")
+            }
+        }
     }
 }
 
@@ -262,12 +447,35 @@ private fun RequestForm(
     var neededParts by rememberSaveable { mutableStateOf("") }
     var destination by rememberSaveable { mutableStateOf("") }
     var submitted by rememberSaveable { mutableStateOf(false) }
+    var locationStatus by rememberSaveable { mutableStateOf("") }
+    val context = LocalContext.current
     val valid = when {
         service.maternityTransport -> phone.isNotBlank() && location.isNotBlank()
         service.roadsideAssistance ->
             name.isNotBlank() && phone.isNotBlank() && problem.isNotBlank() &&
                 location.isNotBlank() && vehicle.isNotBlank()
         else -> name.isNotBlank() && phone.isNotBlank() && problem.isNotBlank()
+    }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            requestCurrentLocation(context) { currentLocation ->
+                if (currentLocation == null) {
+                    locationStatus = "Position indisponible. Vous pouvez saisir le lieu manuellement."
+                } else {
+                    location = String.format(
+                        Locale.US,
+                        "Position approximative : %.2f, %.2f",
+                        currentLocation.latitude,
+                        currentLocation.longitude
+                    )
+                    locationStatus = "Position approximative ajoutée. Vérifiez et précisez le lieu avant l'envoi."
+                }
+            }
+        } else {
+            locationStatus = "Autorisation refusée. Vous pouvez saisir le lieu manuellement."
+        }
     }
 
     Column(
@@ -339,6 +547,35 @@ private fun RequestForm(
             singleLine = true,
             isError = submitted && (service.roadsideAssistance || service.maternityTransport) && location.isBlank()
         )
+        OutlinedButton(
+            onClick = {
+                if (context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED
+                ) {
+                    requestCurrentLocation(context) { currentLocation ->
+                        if (currentLocation == null) {
+                            locationStatus = "Position indisponible. Vous pouvez saisir le lieu manuellement."
+                        } else {
+                            location = String.format(
+                                Locale.US,
+                                "Position approximative : %.2f, %.2f",
+                                currentLocation.latitude,
+                                currentLocation.longitude
+                            )
+                            locationStatus = "Position approximative ajoutée. Vérifiez et précisez le lieu avant l'envoi."
+                        }
+                    }
+                } else {
+                    locationPermissionLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Autoriser et ajouter ma position actuelle")
+        }
+        if (locationStatus.isNotBlank()) {
+            Text(locationStatus, style = MaterialTheme.typography.bodySmall)
+        }
         if (service.maternityTransport) {
             OutlinedTextField(
                 value = destination,
@@ -458,6 +695,24 @@ private fun buildRequestMessage(
     }
 }
 
+private fun buildQuoteResponse(
+    service: Service,
+    amount: String,
+    currency: String,
+    accepted: Boolean,
+    paymentMethod: String?
+): String = buildString {
+    appendLine("Réponse au devis pour : ${service.name}")
+    appendLine("Total communiqué par le prestataire : ${amount.trim()} ${currency.trim()}")
+    if (accepted) {
+        appendLine("J'accepte ce devis.")
+        appendLine("Moyen de paiement choisi : ${requireNotNull(paymentMethod)}")
+        append("Le paiement sera effectué hors application et reste à confirmer directement avec le prestataire.")
+    } else {
+        append("Je refuse ce devis. Aucun paiement ne sera effectué.")
+    }
+}
+
 private fun openWhatsApp(context: Context, message: String): String {
     val number = ContactConfig.CONTACT_PHONE_NUMBER.filter(Char::isDigit)
     if (number.length !in 8..15) {
@@ -484,5 +739,56 @@ private fun dialContact(context: Context): String {
         "Composeur ouvert avec le contact temporaire."
     } catch (_: ActivityNotFoundException) {
         "Impossible d'ouvrir le composeur sur cet appareil."
+    }
+}
+
+@SuppressLint("MissingPermission")
+private fun requestCurrentLocation(context: Context, onResult: (Location?) -> Unit) {
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    val provider = listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
+        .firstOrNull { locationManager.isProviderEnabled(it) }
+    if (provider == null) {
+        onResult(null)
+        return
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        try {
+            locationManager.getCurrentLocation(provider, null, context.mainExecutor) { location ->
+                onResult(location)
+            }
+        } catch (_: SecurityException) {
+            onResult(null)
+        }
+        return
+    }
+
+    val handler = Handler(Looper.getMainLooper())
+    var completed = false
+    lateinit var listener: LocationListener
+    fun finish(location: Location?) {
+        if (completed) return
+        completed = true
+        handler.removeCallbacksAndMessages(null)
+        try {
+            locationManager.removeUpdates(listener)
+        } catch (_: SecurityException) {
+            // Permission may have been revoked while the one-shot request was pending.
+        }
+        onResult(location)
+    }
+
+    listener = object : LocationListener {
+        override fun onLocationChanged(location: Location) = finish(location)
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
+        override fun onProviderEnabled(provider: String) = Unit
+        override fun onProviderDisabled(provider: String) = finish(null)
+    }
+    handler.postDelayed({ finish(null) }, 15_000)
+    try {
+        @Suppress("DEPRECATION")
+        locationManager.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+    } catch (_: SecurityException) {
+        finish(null)
     }
 }
